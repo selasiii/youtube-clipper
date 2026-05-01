@@ -14,13 +14,21 @@ export default function App() {
     const [videoUrl, setVideoUrl] = useState('');
     const [videoInfo, setVideoInfo] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
-    const [segments, setSegments] = useState([]);
+    const [theme, setTheme] = useState(() => localStorage.getItem('clipforge_theme') || 'dark');
+    const [segments, setSegments] = useState(() => {
+        const saved = localStorage.getItem('clipforge_segments');
+        return saved ? JSON.parse(saved) : [];
+    });
     const [activeSegmentIndex, setActiveSegmentIndex] = useState(-1);
     const [currentRange, setCurrentRange] = useState([0, 30]);
     const [quality, setQuality] = useState('best');
+    const [filename, setFilename] = useState('');
+    const [watermarkText, setWatermarkText] = useState('');
+    const [asSingleClips, setAsSingleClips] = useState(false);
     const [processing, setProcessing] = useState(false);
     const [progress, setProgress] = useState(null);
     const [toast, setToast] = useState(null);
+    const [currentTime, setCurrentTime] = useState(0);
 
     const playerRef = useRef(null);
 
@@ -51,6 +59,14 @@ export default function App() {
                 setVideoUrl(url);
                 setVideoInfo(data);
                 setCurrentRange([0, Math.min(30, data.duration)]);
+                
+                // Smart Auto-Naming
+                const slugified = (data.title || 'video')
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, '_')
+                    .replace(/^_+|_+$/g, '');
+                setFilename(slugified);
+
                 showToast(`Loaded: ${data.title}`);
             } else {
                 const text = await res.text();
@@ -139,6 +155,9 @@ export default function App() {
                 body: JSON.stringify({
                     url: videoUrl,
                     quality: quality,
+                    filename: filename,
+                    asSingleClips: asSingleClips,
+                    watermarkText: watermarkText,
                     segments: segments.map((s) => ({ start: s.start, end: s.end })),
                 }),
             });
@@ -169,7 +188,8 @@ export default function App() {
                     // Trigger download
                     const link = document.createElement('a');
                     link.href = `/api/file/${jobId}`;
-                    link.download = 'clipforge_output.mp4';
+                    const ext = progressData.isZip ? '.zip' : '.mp4';
+                    link.download = (filename || 'clipforge_output') + ext;
                     document.body.appendChild(link);
                     link.click();
                     document.body.removeChild(link);
@@ -177,6 +197,15 @@ export default function App() {
                     setTimeout(() => {
                         setProcessing(false);
                     }, 2000);
+                }
+
+                if (progressData.thumbnails) {
+                    setSegments(prev => prev.map((seg, idx) => {
+                        if (progressData.thumbnails[idx]) {
+                            return { ...seg, thumbnail: progressData.thumbnails[idx] };
+                        }
+                        return seg;
+                    }));
                 }
 
                 if (progressData.step === 'error') {
@@ -217,6 +246,38 @@ export default function App() {
         }
     }, [segments, videoUrl, showToast]);
 
+    // ===== Theme Persistence =====
+    useEffect(() => {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('clipforge_theme', theme);
+    }, [theme]);
+
+    const toggleTheme = () => {
+        setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+    };
+
+    // ===== Session Persistence =====
+    useEffect(() => {
+        if (segments.length > 0) {
+            localStorage.setItem('clipforge_segments', JSON.stringify(segments));
+        } else {
+            localStorage.removeItem('clipforge_segments');
+        }
+    }, [segments]);
+
+    useEffect(() => {
+        if (videoUrl) {
+            localStorage.setItem('clipforge_url', videoUrl);
+        }
+    }, [videoUrl]);
+
+    useEffect(() => {
+        const savedUrl = localStorage.getItem('clipforge_url');
+        if (savedUrl && !videoUrl) {
+            handleLoadVideo(savedUrl);
+        }
+    }, []);
+
     // ===== Keyboard Shortcuts =====
     useEffect(() => {
         const handleKey = (e) => {
@@ -251,95 +312,179 @@ export default function App() {
         }
     }, []);
 
+    const handleSliderSlideEnd = useCallback((time) => {
+        if (playerRef.current) {
+            playerRef.current.seekTo(time);
+            playerRef.current.play();
+        }
+    }, []);
+
+    const handleTimeUpdate = useCallback((time) => {
+        setCurrentTime(time);
+        if (activeSegmentIndex !== -1) {
+            const seg = segments[activeSegmentIndex];
+            if (time >= seg.end) {
+                playerRef.current?.seekTo(seg.start);
+            }
+        }
+    }, [activeSegmentIndex, segments]);
+
     return (
         <div className="app-container">
-            <Header />
+            <Header 
+                theme={theme} 
+                onToggleTheme={toggleTheme}
+                onLoadVideo={handleLoadVideo}
+                isLoading={isLoading}
+                quality={quality}
+                onQualityChange={setQuality}
+            />
 
-            <div className="main-content">
-                {/* ===== Left Panel ===== */}
-                <div className="left-panel">
-                    <VideoInput 
-                        onLoadVideo={handleLoadVideo} 
-                        isLoading={isLoading} 
-                        quality={quality}
-                        onQualityChange={setQuality}
-                    />
+            <div className="main-layout">
+                <div className="editor-grid">
+                    {/* ===== Left Panel: Editing Area ===== */}
+                    <div className="editor-main">
+                        {videoInfo && (
+                            <div className="stage-container fade-in">
+                                <div className="video-stage-header">
+                                    <div className="video-info-compact">
+                                        <h2 className="video-title-small">{videoInfo.title}</h2>
+                                        <span className="video-duration-badge">{formatTime(videoInfo.duration)}</span>
+                                    </div>
+                                </div>
 
-                    <VideoPlayer ref={playerRef} videoId={videoId} />
+                                <VideoPlayer 
+                                    ref={playerRef} 
+                                    videoId={videoId} 
+                                    onTimeUpdate={handleTimeUpdate}
+                                />
+                                
+                                <div className="editor-controls">
+                                    <TimelineSlider
+                                        duration={videoInfo.duration}
+                                        currentRange={currentRange}
+                                        onRangeChange={setCurrentRange}
+                                        segments={segments}
+                                        onSlide={handleSliderSlide}
+                                        onSlideEnd={handleSliderSlideEnd}
+                                        currentTime={currentTime}
+                                    />
 
-                    {videoInfo && (
-                        <div className="video-info-bar fade-in">
-                            <span style={{ fontSize: '16px' }}>🎥</span>
-                            <span className="video-info-title">{videoInfo.title}</span>
-                            <span className="video-info-duration">
-                                {formatTime(videoInfo.duration)}
-                            </span>
-                        </div>
-                    )}
+                                    <div className="editor-actions">
+                                        <button
+                                            id="add-segment-btn"
+                                            className="btn btn-primary btn-large"
+                                            onClick={handleAddSegment}
+                                            disabled={processing}
+                                        >
+                                            ✂️ Add to Segments
+                                        </button>
 
-                    {videoInfo && (
-                        <TimelineSlider
-                            duration={videoInfo.duration}
-                            currentRange={currentRange}
-                            onRangeChange={setCurrentRange}
+                                        {activeSegmentIndex !== -1 && (
+                                            <button
+                                                className="btn btn-danger btn-large"
+                                                onClick={() => handleDeleteSegment(activeSegmentIndex)}
+                                                disabled={processing}
+                                                style={{ minWidth: '140px' }}
+                                            >
+                                                🗑 Delete Clip
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        {!videoInfo && !isLoading && (
+                            <div className="empty-stage">
+                                <div className="empty-icon">📺</div>
+                                <p>Enter a YouTube URL to start clipping</p>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* ===== Right Panel: Export & Queue Area ===== */}
+                    <div className="editor-sidebar">
+                        <SegmentList
                             segments={segments}
-                            onSlide={handleSliderSlide}
+                            videoId={videoId}
+                            activeIndex={activeSegmentIndex}
+                            onSelect={handleSelectSegment}
+                            onDelete={handleDeleteSegment}
+                            onEdit={handleEditSegment}
+                            onReorder={handleReorder}
+                            onClearAll={handleClearAll}
                         />
-                    )}
 
-                    {videoInfo && (
-                        <div className="action-bar fade-in">
-                            <button
-                                id="add-segment-btn"
-                                className="btn btn-primary"
-                                onClick={handleAddSegment}
-                                disabled={processing}
-                            >
-                                ✂️ Add Segment
-                            </button>
+                        {videoInfo && (
+                            <div className="export-panel fade-in">
+                                <h3 className="panel-title">Export Settings</h3>
+                                
+                                <div className="input-group">
+                                    <label>Output Filename</label>
+                                    <div className="filename-input-wrapper">
+                                        <input
+                                            type="text"
+                                            placeholder="video_clip"
+                                            value={filename}
+                                            onChange={(e) => setFilename(e.target.value)}
+                                        />
+                                        <span className="extension-badge">.mp4</span>
+                                    </div>
+                                </div>
 
-                            <button
-                                id="download-btn"
-                                className="btn btn-primary"
-                                onClick={handleDownload}
-                                disabled={segments.length === 0 || processing}
-                                style={{
-                                    background: segments.length > 0 && !processing
-                                        ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
-                                        : undefined,
-                                    boxShadow: segments.length > 0 && !processing
-                                        ? '0 4px 15px rgba(16, 185, 129, 0.3)'
-                                        : undefined,
-                                }}
-                            >
-                                {processing ? 'Processing...' : `⬇️ Download ${segments.length > 0 ? `(${segments.length} clips)` : ''}`}
-                            </button>
+                                <div className="input-group">
+                                    <label>Watermark Text</label>
+                                    <div className="filename-input-wrapper">
+                                        <input
+                                            type="text"
+                                            placeholder="@yourhandle"
+                                            value={watermarkText}
+                                            onChange={(e) => setWatermarkText(e.target.value)}
+                                        />
+                                        <span className="extension-badge">🏷️</span>
+                                    </div>
+                                </div>
 
-                            {segments.length > 0 && (
-                                <span style={{
-                                    fontSize: '13px',
-                                    color: 'var(--text-muted)',
-                                    marginLeft: 'auto',
-                                }}>
-                                    Total: {formatTime(totalSegmentDuration)}
-                                </span>
-                            )}
-                        </div>
-                    )}
+                                <div className="input-group">
+                                    <label>Export Mode</label>
+                                    <div className="export-mode-selector">
+                                        <button 
+                                            className={`export-mode-btn ${!asSingleClips ? 'active' : ''}`}
+                                            onClick={() => setAsSingleClips(false)}
+                                        >
+                                            🎞️ Merge into One
+                                        </button>
+                                        <button 
+                                            className={`export-mode-btn ${asSingleClips ? 'active' : ''}`}
+                                            onClick={() => setAsSingleClips(true)}
+                                        >
+                                            📦 Separate Clips (ZIP)
+                                        </button>
+                                    </div>
+                                </div>
 
-                    {progress && <ProgressBar progress={progress} />}
+                                <div className="finalize-actions">
+                                    <button
+                                        id="download-btn"
+                                        className="btn btn-export"
+                                        onClick={handleDownload}
+                                        disabled={segments.length === 0 || processing}
+                                    >
+                                        {processing ? 'Processing...' : `Export ${segments.length} Clips`}
+                                    </button>
+                                    
+                                    {segments.length > 0 && (
+                                        <div className="total-duration">
+                                            Total Length: {formatTime(totalSegmentDuration)}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {progress && <ProgressBar progress={progress} />}
+                            </div>
+                        )}
+                    </div>
                 </div>
-
-                {/* ===== Right Panel ===== */}
-                <SegmentList
-                    segments={segments}
-                    activeIndex={activeSegmentIndex}
-                    onSelect={handleSelectSegment}
-                    onDelete={handleDeleteSegment}
-                    onEdit={handleEditSegment}
-                    onReorder={handleReorder}
-                    onClearAll={handleClearAll}
-                />
             </div>
 
             {/* ===== Toast Notification ===== */}

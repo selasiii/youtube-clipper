@@ -3,6 +3,7 @@ import SegmentItem from './SegmentItem.jsx';
 
 export default function SegmentList({
     segments,
+    videoId,
     activeIndex,
     onSelect,
     onDelete,
@@ -65,6 +66,7 @@ export default function SegmentList({
                         <SegmentItem
                             key={seg.id}
                             segment={seg}
+                            videoId={videoId}
                             index={i}
                             isActive={i === activeIndex}
                             onClick={onSelect}

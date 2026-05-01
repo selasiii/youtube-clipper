@@ -6,7 +6,7 @@ import path from 'path';
  */
 export function getMetadata(url) {
     return new Promise((resolve, reject) => {
-        const proc = spawn('/opt/homebrew/opt/python@3.11/bin/python3.11', [
+        const proc = spawn('python', [
             '-m', 'yt_dlp',
             '--dump-json',
             '--no-playlist',
@@ -14,7 +14,6 @@ export function getMetadata(url) {
             '--force-ipv4',
             '--no-check-certificates',
             '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            '--extractor-args', 'youtube:player_client=android,web',
             url,
         ]);
 
@@ -61,7 +60,7 @@ export function getMetadata(url) {
  * @param {Function} onProgress - Progress callback (0-100)
  * @returns {Promise<string>} - Path to downloaded file
  */
-export function downloadVideo(url, outputPath, quality, onProgress) {
+export function downloadVideo(url, outputPath, quality, range, onProgress) {
     return new Promise((resolve, reject) => {
         let formatStr = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best';
 
@@ -76,7 +75,7 @@ export function downloadVideo(url, outputPath, quality, onProgress) {
         }
 
         const outputTemplate = `${outputPath}.%(ext)s`;
-        const proc = spawn('/opt/homebrew/opt/python@3.11/bin/python3.11', [
+        const args = [
             '-m', 'yt_dlp',
             '-f', formatStr,
             '--merge-output-format', 'mp4',
@@ -86,11 +85,23 @@ export function downloadVideo(url, outputPath, quality, onProgress) {
             '--progress',
             '--force-ipv4',
             '--no-check-certificates',
+            '--retries', '10',
+            '--fragment-retries', '10',
+            '--retry-sleep', '5',
             '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            '--extractor-args', 'youtube:player_client=android,web',
-            '-o', outputTemplate,
-            url,
-        ]);
+            '--downloader', 'ffmpeg',
+            '--downloader-args', 'ffmpeg:-headers "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"',
+            ...(process.env.FFMPEG_DIR ? ['--ffmpeg-location', process.env.FFMPEG_DIR] : []),
+        ];
+
+        // Add section if provided
+        if (range) {
+            args.push('--download-sections', `*${range.start}-${range.end}`);
+        }
+
+        args.push('-o', outputTemplate, url);
+
+        const proc = spawn('python', args);
 
         let stderr = '';
         let lastProgress = 0;
@@ -98,12 +109,30 @@ export function downloadVideo(url, outputPath, quality, onProgress) {
         proc.stdout.on('data', (data) => {
             const lines = data.toString().split('\n');
             for (const line of lines) {
-                const match = line.match(/(\d+\.?\d*)%/);
+                // Regex to capture: [download]  10.0% of ~20.00MiB at  2.50MiB/s ETA 00:04
+                const match = line.match(/\[download\]\s+(\d+\.?\d*)%.*at\s+([\w./]+s).*ETA\s+([\d:]+)/);
                 if (match) {
                     const pct = parseFloat(match[1]);
+                    const speed = match[2];
+                    const eta = match[3];
+                    
                     if (pct > lastProgress) {
                         lastProgress = pct;
-                        onProgress?.(Math.min(pct, 100));
+                        onProgress?.({
+                            percent: Math.min(pct, 100),
+                            speed: speed,
+                            eta: eta
+                        });
+                    }
+                } else {
+                    // Fallback for simple percentage match
+                    const simpleMatch = line.match(/(\d+\.?\d*)%/);
+                    if (simpleMatch) {
+                        const pct = parseFloat(simpleMatch[1]);
+                        if (pct > lastProgress) {
+                            lastProgress = pct;
+                            onProgress?.({ percent: Math.min(pct, 100) });
+                        }
                     }
                 }
             }

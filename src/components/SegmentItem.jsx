@@ -3,6 +3,7 @@ import { formatTime, parseTime } from '../utils/formatTime.js';
 
 export default function SegmentItem({
     segment,
+    videoId,
     index,
     isActive,
     onClick,
@@ -39,6 +40,7 @@ export default function SegmentItem({
     };
 
     const segDuration = segment.end - segment.start;
+    const thumbnailUrl = segment.thumbnail || (videoId ? `https://img.youtube.com/vi/${videoId}/mqdefault.jpg` : null);
 
     return (
         <div
@@ -50,7 +52,11 @@ export default function SegmentItem({
             onDrop={(e) => onDrop(e, index)}
         >
             <div className="segment-drag-handle" title="Drag to reorder">⠿</div>
-            <div className="segment-number">{index + 1}</div>
+            
+            <div className="segment-thumbnail-container">
+                {thumbnailUrl && <img src={thumbnailUrl} alt="Thumbnail" className="segment-thumbnail-img" />}
+                <div className="segment-number-badge">{index + 1}</div>
+            </div>
 
             <div className="segment-times">
                 {isEditing ? (

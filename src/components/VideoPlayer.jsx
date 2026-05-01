@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
 
-const VideoPlayer = forwardRef(function VideoPlayer({ videoId }, ref) {
+const VideoPlayer = forwardRef(function VideoPlayer({ videoId, onTimeUpdate }, ref) {
     const playerRef = useRef(null);
     const iframeRef = useRef(null);
     const apiReadyRef = useRef(false);
@@ -8,6 +8,8 @@ const VideoPlayer = forwardRef(function VideoPlayer({ videoId }, ref) {
     // Load YouTube IFrame API
     useEffect(() => {
         if (!videoId) return;
+
+        let interval;
 
         const loadAPI = () => {
             return new Promise((resolve) => {
@@ -41,19 +43,25 @@ const VideoPlayer = forwardRef(function VideoPlayer({ videoId }, ref) {
                 events: {
                     onReady: () => {
                         apiReadyRef.current = true;
+                        interval = setInterval(() => {
+                            if (playerRef.current && playerRef.current.getCurrentTime) {
+                                onTimeUpdate?.(playerRef.current.getCurrentTime());
+                            }
+                        }, 100);
                     },
                 },
             });
         });
 
         return () => {
+            if (interval) clearInterval(interval);
             if (playerRef.current) {
                 try { playerRef.current.destroy(); } catch { }
                 playerRef.current = null;
                 apiReadyRef.current = false;
             }
         };
-    }, [videoId]);
+    }, [videoId, onTimeUpdate]);
 
     // Expose seek and play methods to parent
     useImperativeHandle(ref, () => ({

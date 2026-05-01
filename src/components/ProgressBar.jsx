@@ -1,8 +1,7 @@
 import React from 'react';
 
 const STEPS = [
-    { key: 'downloading', label: 'Download', icon: '⬇️' },
-    { key: 'cutting', label: 'Cut', icon: '✂️' },
+    { key: 'downloading', label: 'Download & Clip', icon: '⚡' },
     { key: 'merging', label: 'Merge', icon: '🔗' },
     { key: 'done', label: 'Done', icon: '✅' },
 ];
@@ -10,7 +9,7 @@ const STEPS = [
 export default function ProgressBar({ progress }) {
     if (!progress) return null;
 
-    const { step, progress: pct, message } = progress;
+    const { step, progress: pct, message, speed, eta } = progress;
     const isError = step === 'error';
     const isDone = step === 'done';
 
@@ -60,9 +59,17 @@ export default function ProgressBar({ progress }) {
                 />
             </div>
 
-            <p className={`progress-message ${isError ? 'progress-error' : ''}`} style={{ fontWeight: '500', letterSpacing: '0.2px' }}>
-                {message}
-            </p>
+            <div className="progress-info-row">
+                <p className={`progress-message ${isError ? 'progress-error' : ''}`}>
+                    {message}
+                </p>
+                {speed && !isDone && (
+                    <div className="progress-stats fade-in">
+                        <span className="progress-stat-item">🚀 {speed}</span>
+                        <span className="progress-stat-item">⏳ ETA: {eta}</span>
+                    </div>
+                )}
+            </div>
 
             {isDone && (
                 <div className="fade-in" style={{ textAlign: 'center', marginTop: '16px', padding: '12px', background: 'rgba(16, 185, 129, 0.1)', borderRadius: '8px', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
